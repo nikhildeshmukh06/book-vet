@@ -1,38 +1,34 @@
 import streamlit as st
 import google.generativeai as genai
-from PIL import Image
-import os
 
 # --- SETUP ---
-# This looks for the key in the cloud's secure vault
-api_key = st.secrets["GOOGLE_API_KEY"] 
+# On Streamlit Cloud, use this:
+api_key = st.secrets["GOOGLE_API_KEY"]
+
+# If using Pydroid on phone, comment out the line above and use this instead:
+# api_key = "PASTE_YOUR_LONG_KEY_HERE"
 
 genai.configure(api_key=api_key)
-model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
-# --- APP INTERFACE ---
-st.set_page_config(page_title="Book Vet", page_icon="📚")
-st.title("📚 Parent Pal: Book Vetting")
+st.title("🛠 Model Scanner")
 
-img_file = st.camera_input("Take a picture of the book")
+try:
+    st.write("Asking Google for available models...")
+    # This command asks Google: "What works?"
+    available_models = genai.list_models()
+    
+    found_flash = False
+    
+    for m in available_models:
+        # We only care about models that can 'generateContent'
+        if 'generateContent' in m.supported_generation_methods:
+            st.write(f"- `{m.name}`")
+            if "flash" in m.name:
+                found_flash = True
+                st.success(f"✅ FOUND FLASH! Use this name: `{m.name}`")
 
-if img_file is not None:
-    image = Image.open(img_file)
-    with st.spinner("Analyzing for a 12-year-old reader..."):
-        try:
-            prompt = """
-            Look at this book cover. Identify title/author.
-            Reader: 12-year-old girl (born 2013). 
-            
-            Report format:
-            1. **Title/Author**
-            2. **Verdict**: ✅ APPROPRIATE / ⚠️ CAUTION / ❌ NOT APPROPRIATE
-            3. **The "Why"**: Specifics on maturity, language, themes.
-            4. **Plot**: 2-sentence summary.
-            5. **Series Check**: Is it part of a series? Which number?
-            """
-            response = model.generate_content([prompt, image])
-            st.markdown("### 📋 Report")
-            st.markdown(response.text)
-        except Exception as e:
-            st.error(f"Error: {e}")
+    if not found_flash:
+        st.error("❌ No Flash model found. Try using 'gemini-pro' instead.")
+
+except Exception as e:
+    st.error(f"Error: {e}")
