@@ -1,34 +1,53 @@
 import streamlit as st
 import google.generativeai as genai
+from PIL import Image
 
 # --- SETUP ---
-# On Streamlit Cloud, use this:
+# This gets your secure key from Streamlit's settings
 api_key = st.secrets["GOOGLE_API_KEY"]
-
-# If using Pydroid on phone, comment out the line above and use this instead:
-# api_key = "PASTE_YOUR_LONG_KEY_HERE"
 
 genai.configure(api_key=api_key)
 
-st.title("🛠 Model Scanner")
+# UPDATED: Using the specific model we found in your scanner
+model = genai.GenerativeModel('gemini-2.5-flash')
 
-try:
-    st.write("Asking Google for available models...")
-    # This command asks Google: "What works?"
-    available_models = genai.list_models()
+# --- APP INTERFACE ---
+st.set_page_config(page_title="Book Vet", page_icon="📚")
+st.title("📚 Parent Pal: Book Vetting")
+st.write("Snap a photo to check if a book is good for a 12-year-old (born 2013).")
+
+# Camera Input
+img_file = st.camera_input("Take a picture of the book cover")
+
+if img_file is not None:
+    # Display the image briefly so you know it worked
+    image = Image.open(img_file)
     
-    found_flash = False
-    
-    for m in available_models:
-        # We only care about models that can 'generateContent'
-        if 'generateContent' in m.supported_generation_methods:
-            st.write(f"- `{m.name}`")
-            if "flash" in m.name:
-                found_flash = True
-                st.success(f"✅ FOUND FLASH! Use this name: `{m.name}`")
+    with st.spinner("Analyzing story and series info..."):
+        try:
+            # The Instructions for the AI
+            prompt = """
+            Look at this book cover. Identify the title and author.
+            The reader is a 12-year-old girl (born in 2013). 
+            
+            Please provide the following structured analysis:
+            
+            1. **Title & Author**: [Name] by [Author]
+            2. **Verdict**: (Start with ✅ APPROPRIATE, ⚠️ CAUTION, or ❌ NOT APPROPRIATE)
+            3. **The "Why"**: Explain specifically why it is or isn't appropriate for a 12-year-old. Mention maturity level, language, or themes (romance, violence, horror).
+            4. **Plot Summary**: A brief 2-sentence summary of the storyline.
+            5. **Series Check**: Is this part of a series? If yes, which number book is it? (e.g., "Book 2 of 5"). *Highlight if she needs to read previous books first.*
+            """
+            
+            # Send to AI
+            response = model.generate_content([prompt, image])
+            
+            # Display Results
+            st.markdown("### 📋 Analysis Report")
+            st.markdown(response.text)
+            
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
 
-    if not found_flash:
-        st.error("❌ No Flash model found. Try using 'gemini-pro' instead.")
-
-except Exception as e:
-    st.error(f"Error: {e}")
+st.markdown("---")
+st.caption("Always double-check. AI suggestions are based on general book data.")
