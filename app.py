@@ -12,7 +12,7 @@ except:
 
 genai.configure(api_key=api_key)
 # CHANGE THIS LINE:
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-flash-latest')
 
 # --- SESSION STATE ---
 if 'history' not in st.session_state:
