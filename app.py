@@ -95,3 +95,66 @@ if img_file:
                 try:
                     raw_text = response.text
                 except ValueError:
+                    st.error("🚨 Google blocked this image (Safety Filter).")
+                    st.stop()
+
+                clean_text = raw_text.replace("```json", "").replace("```", "").strip()
+                data = json.loads(clean_text)
+                
+                st.session_state.current_report = data
+                st.session_state.current_img_id = img_file.file_id
+                
+                if not any(b['title'] == data['title'] for b in st.session_state.history):
+                    st.session_state.history.append(data)
+                    
+            except Exception as e:
+                st.error(f"Error reading book: {e}")
+                st.stop()
+
+    # --- DISPLAY REPORT ---
+    if st.session_state.current_report:
+        data = st.session_state.current_report
+        
+        with report_container:
+            st.divider()
+            c1, c2 = st.columns([1, 2])
+            with c1:
+                st.image(image, width=120, caption="Scanned")
+            with c2:
+                color = "green" if "Green" in data["verdict"] else "orange"
+                if "Red" in data["verdict"]: color = "red"
+                st.markdown(f":{color}[**VERDICT: {data['verdict']}**]")
+                st.subheader(data["title"])
+                st.caption(f"{data['author']} | {data['series']}")
+                st.write(f"**Summary:** {data['one_line_verdict']}")
+
+            # NEW SECTION: THE GOOD STUFF
+            st.success(f"**🌟 The Good Stuff:** {data['positive_highlights']}")
+
+            st.markdown("### 📊 Ratings")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                # RENAMED CATEGORY
+                st.write(f"**Positive Content:** {data['ratings']['positive_content']}/5")
+                st.progress(int(data['ratings']['positive_content'])/5)
+                st.write(f"**Language:** {data['ratings']['language']}/5")
+                st.progress(int(data['ratings']['language'])/5)
+            with col_b:
+                st.write(f"**Violence:** {data['ratings']['violence']}/5")
+                st.progress(int(data['ratings']['violence'])/5)
+                st.write(f"**Sex/Romance:** {data['ratings']['sex']}/5")
+                st.progress(int(data['ratings']['sex'])/5)
+            
+            st.markdown("### 📝 Details")
+            st.write(data["details"])
+
+        # --- CHAT FEATURE ---
+        st.divider()
+        st.subheader("💬 Ask about this book")
+        user_question = st.text_input("Example: 'Is it scary?' or 'Is there swearing?'")
+        
+        if user_question:
+            with st.spinner("Checking..."):
+                chat_prompt = f"You are analyzing the book '{data['title']}' for Samaira ({target_age}). The parent asks: {user_question}. Answer briefly and honestly."
+                chat_response = model.generate_content([chat_prompt, image])
+                st.write(f"**Answer:** {chat_response.text}")
