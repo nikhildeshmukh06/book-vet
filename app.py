@@ -56,11 +56,9 @@ img_file = st.camera_input(f"Scan book cover")
 if img_file:
     image = Image.open(img_file)
     
-    # CONTAINER: Keeps the layout stable
     report_container = st.container()
     
-    # LOGIC CHECK: Do we need to run the AI?
-    # We run it if: 1. It's a new photo ID  OR  2. We don't have a report yet
+    # LOGIC CHECK
     should_analyze = False
     if st.session_state.current_img_id != img_file.file_id:
         should_analyze = True
@@ -68,8 +66,9 @@ if img_file:
         should_analyze = True
 
     if should_analyze:
-        with st.spinner("Checking if this is good for Samaira..."):
+        with st.spinner("Checking for positive themes..."):
             try:
+                # UPDATED PROMPT: Asks for "Positive Content" and "Highlights"
                 prompt = f"""
                 Analyze this book cover. The reader is a {target_age}-year-old girl named Samaira.
                 
@@ -80,76 +79,19 @@ if img_file:
                     "series": "Series Info (e.g. Book 2 of 5)",
                     "verdict": "Green/Yellow/Red",
                     "one_line_verdict": "Short summary decision.",
-                    "ratings": {{ "violence": "0-5", "sex": "0-5", "language": "0-5", "role_models": "0-5" }},
+                    "positive_highlights": "One clear sentence highlighting the best themes (e.g. 'Promotes bravery and friendship').",
+                    "ratings": {{ 
+                        "violence": "0-5", 
+                        "sex": "0-5", 
+                        "language": "0-5", 
+                        "positive_content": "0-5" 
+                    }},
                     "details": "Detailed parents guide.",
                     "plot": "Plot summary."
                 }}
                 """
                 response = model.generate_content([prompt, image])
                 
-                # SAFETY CHECK: If Gemini blocks the response, .text fails
                 try:
                     raw_text = response.text
                 except ValueError:
-                    st.error("🚨 Google blocked this image (Safety Filter). It might be too graphic.")
-                    st.stop()
-
-                # Clean JSON
-                clean_text = raw_text.replace("```json", "").replace("```", "").strip()
-                data = json.loads(clean_text)
-                
-                # Save to memory
-                st.session_state.current_report = data
-                st.session_state.current_img_id = img_file.file_id
-                
-                # Add to history
-                if not any(b['title'] == data['title'] for b in st.session_state.history):
-                    st.session_state.history.append(data)
-                    
-            except Exception as e:
-                st.error(f"Error reading book: {e}")
-                st.stop()
-
-    # --- DISPLAY REPORT ---
-    if st.session_state.current_report:
-        data = st.session_state.current_report
-        
-        with report_container:
-            st.divider()
-            c1, c2 = st.columns([1, 2])
-            with c1:
-                st.image(image, width=120, caption="Scanned")
-            with c2:
-                color = "green" if "Green" in data["verdict"] else "orange"
-                if "Red" in data["verdict"]: color = "red"
-                st.markdown(f":{color}[**VERDICT: {data['verdict']}**]")
-                st.subheader(data["title"])
-                st.caption(f"{data['author']} | {data['series']}")
-                st.info(data["one_line_verdict"])
-
-            st.markdown("### 📊 Ratings")
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.write(f"**Violence:** {data['ratings']['violence']}/5")
-                st.progress(int(data['ratings']['violence'])/5)
-                st.write(f"**Language:** {data['ratings']['language']}/5")
-                st.progress(int(data['ratings']['language'])/5)
-            with col_b:
-                st.write(f"**Role Models:** {data['ratings']['role_models']}/5")
-                st.progress(int(data['ratings']['role_models'])/5)
-                st.write(f"**Sex/Romance:** {data['ratings']['sex']}/5")
-                st.progress(int(data['ratings']['sex'])/5)
-            
-            st.markdown("### 📝 Details")
-            st.write(data["details"])
-
-        # --- CHAT FEATURE ---
-        st.divider()
-        st.subheader("💬 Ask about this book")
-        user_question = st.text_input("Example: 'Is it scary?' or 'Is there swearing?'")
-        
-        if user_question:
-            with st.spinner("Checking..."):
-                chat_prompt = f"You are analyzing the book '{data['title']}' for Samaira ({target_age}). The parent asks: {user_question}. Answer briefly and honestly."
-                chat_response = model.generate_content([chat_prompt, image])
-                st.write(f"**Answer:** {chat_response.text}")
