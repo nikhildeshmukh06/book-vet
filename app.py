@@ -16,13 +16,13 @@ model = genai.GenerativeModel('gemini-2.5-flash')
 # --- SESSION STATE ---
 if 'history' not in st.session_state:
     st.session_state.history = []
-if 'current_report' not in st.session_state:
-    st.session_state.current_report = None
+if 'current_results' not in st.session_state:
+    st.session_state.current_results = None
 if 'current_img_id' not in st.session_state:
     st.session_state.current_img_id = ""
 
 # --- APP UI ---
-st.set_page_config(page_title="Samaira's Books", page_icon="📚")
+st.set_page_config(page_title="Samaira's Library", page_icon="📚")
 
 # SIDEBAR
 with st.sidebar:
@@ -45,120 +45,120 @@ with st.sidebar:
             st.write(book['one_line_verdict'])
 
 # MAIN PAGE
-st.title("📚 Can Samaira read this book?")
+st.title("📚 Can Samaira read these?")
+st.caption("Tip: You can take a photo of multiple books at once!")
 
 col1, col2 = st.columns([2,1])
 with col2:
     target_age = st.number_input("Age", 5, 18, 12)
 
-img_file = st.camera_input(f"Scan book cover")
+img_file = st.camera_input(f"Scan books")
 
 if img_file:
     image = Image.open(img_file)
+    results_container = st.container()
     
-    report_container = st.container()
-    
-    # LOGIC CHECK
-    should_analyze = False
+    # LOGIC: Run AI only if new photo
     if st.session_state.current_img_id != img_file.file_id:
-        should_analyze = True
-    elif st.session_state.current_report is None:
-        should_analyze = True
-
-    if should_analyze:
-        with st.spinner("Checking for red flags..."):
+        with st.spinner("Analyzing all books in the photo..."):
             try:
-                # UPDATED PROMPT: Now asks for 'negative_highlights' too
+                # UPDATED PROMPT: HANDLES MULTIPLE BOOKS
                 prompt = f"""
-                Analyze this book cover. The reader is a {target_age}-year-old girl named Samaira.
+                Look at this image. It may contain one book or MULTIPLE books.
+                The reader is a {target_age}-year-old girl named Samaira.
                 
-                Return valid JSON:
+                I need you to identify EVERY book visible in the image.
+                
+                Return a valid JSON object with this structure:
                 {{
-                    "title": "Title",
-                    "author": "Author",
-                    "series": "Series Info (e.g. Book 2 of 5)",
-                    "verdict": "Green/Yellow/Red",
-                    "one_line_verdict": "Short summary decision.",
-                    "negative_highlights": "One clear sentence warning about the most concerning content (e.g. 'Contains mild violence and bullying').",
-                    "positive_highlights": "One clear sentence highlighting the best themes (e.g. 'Promotes bravery and friendship').",
-                    "ratings": {{ 
-                        "violence": "0-5", 
-                        "sex": "0-5", 
-                        "language": "0-5", 
-                        "positive_content": "0-5" 
-                    }},
-                    "details": "Detailed parents guide.",
-                    "plot": "Plot summary."
+                    "books": [
+                        {{
+                            "title": "Title",
+                            "author": "Author",
+                            "verdict": "Green/Yellow/Red",
+                            "one_line_verdict": "Short summary decision.",
+                            "negative_highlights": "One sentence warning (if any).",
+                            "positive_highlights": "One sentence highlights.",
+                            "ratings": {{ "violence": "0-5", "sex": "0-5", "language": "0-5", "positive_content": "0-5" }},
+                            "details": "Details parents guide."
+                        }}
+                    ],
+                    "best_pick": {{
+                        "title": "Title of the most appropriate book for her age",
+                        "reason": "Why this is the winner compared to the others."
+                    }}
                 }}
                 """
                 response = model.generate_content([prompt, image])
                 
                 try:
-                    raw_text = response.text
-                except ValueError:
-                    st.error("🚨 Google blocked this image (Safety Filter).")
+                    clean_text = response.text.replace("```json", "").replace("```", "").strip()
+                    data = json.loads(clean_text)
+                except:
+                    st.error("Could not read the books. Try getting closer.")
                     st.stop()
 
-                clean_text = raw_text.replace("```json", "").replace("```", "").strip()
-                data = json.loads(clean_text)
-                
-                st.session_state.current_report = data
+                # Save to memory
+                st.session_state.current_results = data
                 st.session_state.current_img_id = img_file.file_id
                 
-                if not any(b['title'] == data['title'] for b in st.session_state.history):
-                    st.session_state.history.append(data)
+                # Add all found books to history (avoiding dupes)
+                for book in data['books']:
+                    if not any(b['title'] == book['title'] for b in st.session_state.history):
+                        st.session_state.history.append(book)
                     
             except Exception as e:
-                st.error(f"Error reading book: {e}")
+                st.error(f"Error: {e}")
                 st.stop()
 
-    # --- DISPLAY REPORT ---
-    if st.session_state.current_report:
-        data = st.session_state.current_report
-        
-        with report_container:
+    # --- DISPLAY RESULTS ---
+    if st.session_state.current_results:
+        data = st.session_state.current_results
+        books = data.get("books", [])
+        best = data.get("best_pick", {})
+
+        with results_container:
             st.divider()
-            c1, c2 = st.columns([1, 2])
-            with c1:
-                st.image(image, width=120, caption="Scanned")
-            with c2:
-                color = "green" if "Green" in data["verdict"] else "orange"
-                if "Red" in data["verdict"]: color = "red"
-                st.markdown(f":{color}[**VERDICT: {data['verdict']}**]")
-                st.subheader(data["title"])
-                st.caption(f"{data['author']} | {data['series']}")
-                st.write(f"**Summary:** {data['one_line_verdict']}")
-
-            # SECTION 1: THE BAD STUFF (Red Box)
-            if "negative_highlights" in data and data["negative_highlights"]:
-                st.error(f"**⚠️ The Bad Stuff:** {data['negative_highlights']}")
-
-            # SECTION 2: THE GOOD STUFF (Green Box)
-            st.success(f"**🌟 The Good Stuff:** {data['positive_highlights']}")
-
-            st.markdown("### 📊 Ratings")
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.write(f"**Positive Content:** {data['ratings']['positive_content']}/5")
-                st.progress(int(data['ratings']['positive_content'])/5)
-                st.write(f"**Language:** {data['ratings']['language']}/5")
-                st.progress(int(data['ratings']['language'])/5)
-            with col_b:
-                st.write(f"**Violence:** {data['ratings']['violence']}/5")
-                st.progress(int(data['ratings']['violence'])/5)
-                st.write(f"**Sex/Romance:** {data['ratings']['sex']}/5")
-                st.progress(int(data['ratings']['sex'])/5)
             
-            st.markdown("### 📝 Details")
-            st.write(data["details"])
+            # 1. SHOW THE WINNER (Only if more than 1 book)
+            if len(books) > 1:
+                st.markdown("### 🏆 The Top Pick")
+                st.success(f"**{best['title']}** is the best choice because: {best['reason']}")
+                st.divider()
 
-        # --- CHAT FEATURE ---
+            # 2. SHOW EACH BOOK CARD
+            st.subheader(f"Found {len(books)} Books:")
+            
+            for i, book in enumerate(books):
+                # Color logic
+                color = "green" if "Green" in book["verdict"] else "orange"
+                if "Red" in book["verdict"]: color = "red"
+                
+                # Create a visual card for each book
+                with st.expander(f"{i+1}. {book['title']} ({book['verdict']})", expanded=True):
+                    st.markdown(f":{color}[**VERDICT: {book['verdict']}**]")
+                    st.caption(f"By {book['author']}")
+                    
+                    if book.get("negative_highlights"):
+                        st.error(f"⚠️ {book['negative_highlights']}")
+                    st.success(f"🌟 {book['positive_highlights']}")
+                    
+                    # Mini ratings grid
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Positive", f"{book['ratings']['positive_content']}/5")
+                    c2.metric("Violence", f"{book['ratings']['violence']}/5")
+                    c3.metric("Lang", f"{book['ratings']['language']}/5")
+                    c4.metric("Romance", f"{book['ratings']['sex']}/5")
+                    
+                    st.write(f"**Details:** {book['details']}")
+
+        # --- CHAT FEATURE (Global) ---
         st.divider()
-        st.subheader("💬 Ask about this book")
-        user_question = st.text_input("Example: 'Is it scary?' or 'Is there swearing?'")
+        st.subheader("💬 Ask about these books")
+        user_question = st.text_input("Example: 'Which one is funniest?'")
         
         if user_question:
-            with st.spinner("Checking..."):
-                chat_prompt = f"You are analyzing the book '{data['title']}' for Samaira ({target_age}). The parent asks: {user_question}. Answer briefly and honestly."
+            with st.spinner("Comparing..."):
+                chat_prompt = f"You are analyzing these books: {[b['title'] for b in books]}. The parent asks: {user_question}. Compare them briefly for Samaira."
                 chat_response = model.generate_content([chat_prompt, image])
                 st.write(f"**Answer:** {chat_response.text}")
