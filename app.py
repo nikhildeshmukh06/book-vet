@@ -66,9 +66,9 @@ if img_file:
         should_analyze = True
 
     if should_analyze:
-        with st.spinner("Checking for positive themes..."):
+        with st.spinner("Checking for red flags..."):
             try:
-                # UPDATED PROMPT: Asks for "Positive Content" and "Highlights"
+                # UPDATED PROMPT: Now asks for 'negative_highlights' too
                 prompt = f"""
                 Analyze this book cover. The reader is a {target_age}-year-old girl named Samaira.
                 
@@ -79,6 +79,7 @@ if img_file:
                     "series": "Series Info (e.g. Book 2 of 5)",
                     "verdict": "Green/Yellow/Red",
                     "one_line_verdict": "Short summary decision.",
+                    "negative_highlights": "One clear sentence warning about the most concerning content (e.g. 'Contains mild violence and bullying').",
                     "positive_highlights": "One clear sentence highlighting the best themes (e.g. 'Promotes bravery and friendship').",
                     "ratings": {{ 
                         "violence": "0-5", 
@@ -128,13 +129,16 @@ if img_file:
                 st.caption(f"{data['author']} | {data['series']}")
                 st.write(f"**Summary:** {data['one_line_verdict']}")
 
-            # NEW SECTION: THE GOOD STUFF
+            # SECTION 1: THE BAD STUFF (Red Box)
+            if "negative_highlights" in data and data["negative_highlights"]:
+                st.error(f"**⚠️ The Bad Stuff:** {data['negative_highlights']}")
+
+            # SECTION 2: THE GOOD STUFF (Green Box)
             st.success(f"**🌟 The Good Stuff:** {data['positive_highlights']}")
 
             st.markdown("### 📊 Ratings")
             col_a, col_b = st.columns(2)
             with col_a:
-                # RENAMED CATEGORY
                 st.write(f"**Positive Content:** {data['ratings']['positive_content']}/5")
                 st.progress(int(data['ratings']['positive_content'])/5)
                 st.write(f"**Language:** {data['ratings']['language']}/5")
