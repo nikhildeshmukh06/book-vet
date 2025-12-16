@@ -8,31 +8,25 @@ import json
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
 except:
-    st.error("Missing API Key. Please add it to Streamlit Secrets.")
+    st.error("Missing API Key")
     st.stop()
 
 genai.configure(api_key=api_key)
-# Using the 2.5 Flash model you found (fastest & smartest)
 model = genai.GenerativeModel('gemini-2.5-flash')
 
-# --- HELPER: ROBUST BOOK SEARCH ---
+# --- SESSION STATE (The Memory) ---
+# This keeps data alive even when you click buttons
+if 'history' not in st.session_state:
+    st.session_state.history = []
+
+# --- HELPER: BOOK SEARCH ---
 def get_book_cover(title, author):
-    """
-    Searches Google Books API.
-    Uses a broad search 'q=Title Author' instead of strict 'intitle:'.
-    """
     try:
-        # "clean" the query to avoid errors
         clean_query = f"{title} {author}"
         url = f"https://www.googleapis.com/books/v1/volumes?q={clean_query}&maxResults=1"
-        
         response = requests.get(url).json()
-        
         if "items" in response:
-            book = response["items"][0]["volumeInfo"]
-            image_links = book.get("imageLinks", {})
-            # Try getting the largest available image, fallback to thumbnail
-            return image_links.get("thumbnail")
+            return response["items"][0]["volumeInfo"].get("imageLinks", {}).get("thumbnail")
     except:
         return None
     return None
@@ -40,121 +34,103 @@ def get_book_cover(title, author):
 # --- APP UI ---
 st.set_page_config(page_title="Book Vet Pro", page_icon="🛡️")
 
-st.title("🛡️ Parent Pal: Reviewer")
+# SIDEBAR: THE BOOKSHELF
+with st.sidebar:
+    st.header(f"📚 My Stack ({len(st.session_state.history)})")
+    if st.button("Clear History"):
+        st.session_state.history = []
+        st.rerun()
+    
+    for book in st.session_state.history:
+        # Color code the history items
+        emoji = "✅" if "Green" in book['verdict'] else "⚠️"
+        if "Red" in book['verdict']: emoji = "❌"
+        
+        with st.expander(f"{emoji} {book['title']}"):
+            st.caption(book['author'])
+            st.write(book['one_line_verdict'])
 
-# User Inputs
+# MAIN PAGE
+st.title("🛡️ Parent Pal: Scanner")
+
+# Custom Filters (Feature #2 Idea)
+filters = st.multiselect(
+    "Flag these specific topics if found:",
+    ["Bullying", "Death of a Pet", "Romance", "Ghost/Horror", "Swearing"],
+    default=[]
+)
+
 col1, col2 = st.columns([2,1])
-with col1:
-    st.write("Snap a photo to generate a detailed safety report.")
 with col2:
     target_age = st.number_input("Age", 5, 18, 12)
 
-# Camera
 img_file = st.camera_input(f"Scan book for {target_age}-year-old")
 
 if img_file:
     image = Image.open(img_file)
     
-    with st.spinner("Analyzing content & searching library..."):
+    with st.spinner("Reading & Reviewing..."):
         try:
-            # --- THE PROMPT ---
-            # We ask for a strict JSON format with 0-5 ratings
+            # Add user filters to prompt
+            filter_text = ""
+            if filters:
+                filter_text = f"CRITICAL: The parent specifically wants to know if the book contains: {', '.join(filters)}. If found, mention it prominently."
+
             prompt = f"""
-            Analyze this book cover. The reader is a {target_age}-year-old child.
+            Analyze this book cover. Reader: {target_age}-year-old.
+            {filter_text}
             
-            Return a valid JSON object with these exact keys:
+            Return valid JSON:
             {{
-                "title": "Book Title",
-                "author": "Author Name",
-                "series": "Book X of Y (or 'Standalone')",
-                "age_rating": "Recommended Minimum Age (e.g. 10+)",
-                "verdict": "Green (Go) / Yellow (Caution) / Red (Stop)",
-                "one_line_verdict": "Short sentence explaining the verdict.",
-                "ratings": {{
-                    "educational": "0 to 5",
-                    "positive_messages": "0 to 5",
-                    "positive_role_models": "0 to 5",
-                    "violence": "0 to 5",
-                    "sex": "0 to 5",
-                    "language": "0 to 5",
-                    "drinking_drugs": "0 to 5"
-                }},
-                "parents_need_to_know": "A paragraph explaining the sensitive content in detail.",
-                "story_summary": "Two sentence plot summary."
+                "title": "Title",
+                "author": "Author",
+                "series": "Series Info",
+                "verdict": "Green/Yellow/Red",
+                "one_line_verdict": "Short summary decision.",
+                "ratings": {{ "violence": "0-5", "sex": "0-5", "language": "0-5", "role_models": "0-5" }},
+                "details": "Detailed parents guide.",
+                "plot": "Plot summary."
             }}
             """
             
             response = model.generate_content([prompt, image])
-            
-            # --- PARSE DATA ---
-            # Clean text to ensure JSON is valid
             raw_text = response.text.replace("```json", "").replace("```", "").strip()
             data = json.loads(raw_text)
             
-            # Fetch Cover
+            # SAVE TO HISTORY (Avoid duplicates)
+            if not any(b['title'] == data['title'] for b in st.session_state.history):
+                st.session_state.history.append(data)
+            
             official_cover = get_book_cover(data["title"], data["author"])
             
-            # --- DISPLAY THE REPORT ---
+            # --- REPORT DISPLAY ---
             st.divider()
-
-            # 1. TOP HEADER (Verdict & Cover)
             c1, c2 = st.columns([1, 2])
             with c1:
-                if official_cover:
-                    st.image(official_cover, caption="Library Match", width=110)
-                else:
-                    st.image(image, caption="Your Scan", width=110)
-            
+                st.image(official_cover if official_cover else image, width=100)
             with c2:
-                # Color-coded Verdict
-                color = "green"
-                if "Yellow" in data["verdict"]: color = "orange"
+                color = "green" if "Green" in data["verdict"] else "orange"
                 if "Red" in data["verdict"]: color = "red"
-                
-                st.markdown(f":{color}[**VERDICT: {data['verdict'].upper()}**]")
+                st.markdown(f":{color}[**VERDICT: {data['verdict']}**]")
                 st.subheader(data["title"])
-                st.caption(f"By {data['author']} | {data['series']}")
-                st.markdown(f"**Target Age:** {data['age_rating']}")
+                st.caption(f"Series: {data['series']}")
 
-            st.info(f"**Bottom Line:** {data['one_line_verdict']}")
+            # Special Flag Warning
+            if filters:
+                st.markdown("### 🚩 Filter Check")
+                st.info("Checked for: " + ", ".join(filters))
 
-            # 2. THE "COMMON SENSE" GRID
-            st.markdown("### 📊 Content Grid")
-            st.caption("Scale: 0 (None) to 5 (Heavy)")
-            
-            # Helper to draw progress bars
-            def draw_rating(label, score, is_bad_thing=True):
-                # Calculate color: If it's a "bad" thing (Violence), high score is Red.
-                # If it's a "good" thing (Role Models), high score is Green.
-                score = int(score)
-                bar_color = "red" if is_bad_thing else "green"
-                st.write(f"**{label}** ({score}/5)")
-                st.progress(score / 5)
-
-            r = data["ratings"]
-            
+            st.markdown("### 📊 Ratings")
             col_a, col_b = st.columns(2)
             with col_a:
-                st.markdown("#### ⚠️ Sensitive")
-                draw_rating("Violence & Scary", r["violence"], True)
-                draw_rating("Sex & Romance", r["sex"], True)
-                draw_rating("Language", r["language"], True)
-                draw_rating("Drinking/Drugs", r["drinking_drugs"], True)
-                
+                st.write(f"**Violence:** {data['ratings']['violence']}/5")
+                st.progress(int(data['ratings']['violence'])/5)
             with col_b:
-                st.markdown("#### ✅ Positive")
-                draw_rating("Role Models", r["positive_role_models"], False)
-                draw_rating("Pos. Messages", r["positive_messages"], False)
-                draw_rating("Educational", r["educational"], False)
-
-            # 3. TEXT DETAILS
-            st.markdown("### 📝 Parents Need to Know")
-            st.write(data["parents_need_to_know"])
-            
-            st.markdown("### 📖 The Story")
-            st.write(data["story_summary"])
+                st.write(f"**Role Models:** {data['ratings']['role_models']}/5")
+                st.progress(int(data['ratings']['role_models'])/5)
+                
+            st.markdown("### 📝 Details")
+            st.write(data["details"])
 
         except Exception as e:
-            st.error("Oops! Could not analyze. Please try a clearer photo.")
-            with st.expander("See technical error"):
-                st.write(e)
+            st.error(f"Error: {e}")
