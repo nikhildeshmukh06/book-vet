@@ -16,25 +16,27 @@ model = genai.GenerativeModel('gemini-2.5-flash')
 # --- SESSION STATE ---
 if 'history' not in st.session_state:
     st.session_state.history = []
+if 'current_report' not in st.session_state:
+    st.session_state.current_report = None
+if 'current_img_id' not in st.session_state:
+    st.session_state.current_img_id = ""
 
 # --- APP UI ---
 st.set_page_config(page_title="Samaira's Books", page_icon="📚")
 
-# SIDEBAR: BOOKSHELF
+# SIDEBAR
 with st.sidebar:
     st.header(f"📚 Stack ({len(st.session_state.history)})")
     if st.button("Clear History"):
         st.session_state.history = []
         st.rerun()
     
-    # Download Button
     if st.session_state.history:
         text_data = "SAMAIRA'S BOOK LIST:\n\n"
         for b in st.session_state.history:
             text_data += f"- {b['title']} ({b['verdict']})\n"
         st.download_button("📥 Save List", text_data, "samaira_books.txt")
 
-    # List items
     for book in st.session_state.history:
         emoji = "✅" if "Green" in book['verdict'] else "⚠️"
         if "Red" in book['verdict']: emoji = "❌"
@@ -49,17 +51,23 @@ col1, col2 = st.columns([2,1])
 with col2:
     target_age = st.number_input("Age", 5, 18, 12)
 
-# Camera Input
 img_file = st.camera_input(f"Scan book cover")
 
 if img_file:
     image = Image.open(img_file)
     
-    # Report Container
+    # CONTAINER: Keeps the layout stable
     report_container = st.container()
     
-    # LOGIC: Check if we need to run the AI or if we just load from memory
-    if "current_img_id" not in st.session_state or st.session_state.current_img_id != img_file.file_id:
+    # LOGIC CHECK: Do we need to run the AI?
+    # We run it if: 1. It's a new photo ID  OR  2. We don't have a report yet
+    should_analyze = False
+    if st.session_state.current_img_id != img_file.file_id:
+        should_analyze = True
+    elif st.session_state.current_report is None:
+        should_analyze = True
+
+    if should_analyze:
         with st.spinner("Checking if this is good for Samaira..."):
             try:
                 prompt = f"""
@@ -79,20 +87,69 @@ if img_file:
                 """
                 response = model.generate_content([prompt, image])
                 
-                # FIX IS HERE: Ensures we strip the JSON markers cleanly
-                raw_text = response.text.replace("```json", "").replace("```", "").strip()
-                data = json.loads(raw_text)
+                # SAFETY CHECK: If Gemini blocks the response, .text fails
+                try:
+                    raw_text = response.text
+                except ValueError:
+                    st.error("🚨 Google blocked this image (Safety Filter). It might be too graphic.")
+                    st.stop()
+
+                # Clean JSON
+                clean_text = raw_text.replace("```json", "").replace("```", "").strip()
+                data = json.loads(clean_text)
                 
-                # Save to session state
+                # Save to memory
                 st.session_state.current_report = data
                 st.session_state.current_img_id = img_file.file_id
                 
-                # Add to history if unique
+                # Add to history
                 if not any(b['title'] == data['title'] for b in st.session_state.history):
                     st.session_state.history.append(data)
                     
             except Exception as e:
-                st.error("Could not read cover. Please try again.")
-                # Print the error to help debug if needed
-                print(e)
+                st.error(f"Error reading book: {e}")
                 st.stop()
+
+    # --- DISPLAY REPORT ---
+    if st.session_state.current_report:
+        data = st.session_state.current_report
+        
+        with report_container:
+            st.divider()
+            c1, c2 = st.columns([1, 2])
+            with c1:
+                st.image(image, width=120, caption="Scanned")
+            with c2:
+                color = "green" if "Green" in data["verdict"] else "orange"
+                if "Red" in data["verdict"]: color = "red"
+                st.markdown(f":{color}[**VERDICT: {data['verdict']}**]")
+                st.subheader(data["title"])
+                st.caption(f"{data['author']} | {data['series']}")
+                st.info(data["one_line_verdict"])
+
+            st.markdown("### 📊 Ratings")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.write(f"**Violence:** {data['ratings']['violence']}/5")
+                st.progress(int(data['ratings']['violence'])/5)
+                st.write(f"**Language:** {data['ratings']['language']}/5")
+                st.progress(int(data['ratings']['language'])/5)
+            with col_b:
+                st.write(f"**Role Models:** {data['ratings']['role_models']}/5")
+                st.progress(int(data['ratings']['role_models'])/5)
+                st.write(f"**Sex/Romance:** {data['ratings']['sex']}/5")
+                st.progress(int(data['ratings']['sex'])/5)
+            
+            st.markdown("### 📝 Details")
+            st.write(data["details"])
+
+        # --- CHAT FEATURE ---
+        st.divider()
+        st.subheader("💬 Ask about this book")
+        user_question = st.text_input("Example: 'Is it scary?' or 'Is there swearing?'")
+        
+        if user_question:
+            with st.spinner("Checking..."):
+                chat_prompt = f"You are analyzing the book '{data['title']}' for Samaira ({target_age}). The parent asks: {user_question}. Answer briefly and honestly."
+                chat_response = model.generate_content([chat_prompt, image])
+                st.write(f"**Answer:** {chat_response.text}")
