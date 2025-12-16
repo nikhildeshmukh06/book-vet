@@ -18,7 +18,6 @@ if 'history' not in st.session_state:
     st.session_state.history = []
 
 # --- APP UI ---
-# This sets the browser tab name
 st.set_page_config(page_title="Samaira's Books", page_icon="📚")
 
 # SIDEBAR: BOOKSHELF
@@ -44,12 +43,10 @@ with st.sidebar:
             st.write(book['one_line_verdict'])
 
 # MAIN PAGE
-# --- UPDATED TITLE HERE ---
 st.title("📚 Can Samaira read this book?")
 
 col1, col2 = st.columns([2,1])
 with col2:
-    # Default is 12, but you can change it if needed
     target_age = st.number_input("Age", 5, 18, 12)
 
 # Camera Input
@@ -58,11 +55,10 @@ img_file = st.camera_input(f"Scan book cover")
 if img_file:
     image = Image.open(img_file)
     
-    # We use a container so we can display the chat cleanly below the report
+    # Report Container
     report_container = st.container()
     
-    # LOGIC: Only run the heavy AI analysis if we haven't already done it for this specific photo
-    # This prevents the app from "re-reading" the book every time you type a chat message.
+    # LOGIC: Check if we need to run the AI or if we just load from memory
     if "current_img_id" not in st.session_state or st.session_state.current_img_id != img_file.file_id:
         with st.spinner("Checking if this is good for Samaira..."):
             try:
@@ -82,4 +78,21 @@ if img_file:
                 }}
                 """
                 response = model.generate_content([prompt, image])
-                raw_text = response.text.replace("```json", "").replace("```", "").
+                
+                # FIX IS HERE: Ensures we strip the JSON markers cleanly
+                raw_text = response.text.replace("```json", "").replace("```", "").strip()
+                data = json.loads(raw_text)
+                
+                # Save to session state
+                st.session_state.current_report = data
+                st.session_state.current_img_id = img_file.file_id
+                
+                # Add to history if unique
+                if not any(b['title'] == data['title'] for b in st.session_state.history):
+                    st.session_state.history.append(data)
+                    
+            except Exception as e:
+                st.error("Could not read cover. Please try again.")
+                # Print the error to help debug if needed
+                print(e)
+                st.stop()
