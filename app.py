@@ -11,9 +11,29 @@ except:
     st.stop()
 
 genai.configure(api_key=api_key)
-# CHANGE THIS LINE:
-# This model was marked GREEN in your scanner, so it is guaranteed to work
-model = genai.GenerativeModel('gemini-flash-lite-latest')
+
+# We switch to the standard 1.5 Flash. It is smarter than Lite but efficient.
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+# SAFETY SETTINGS: Prevent the AI from blocking "scary" book covers
+safety_settings = [
+    {
+        "category": "HARM_CATEGORY_HARASSMENT",
+        "threshold": "BLOCK_NONE"
+    },
+    {
+        "category": "HARM_CATEGORY_HATE_SPEECH",
+        "threshold": "BLOCK_NONE"
+    },
+    {
+        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+        "threshold": "BLOCK_NONE"
+    },
+    {
+        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+        "threshold": "BLOCK_NONE"
+    },
+]
 
 # --- SESSION STATE ---
 if 'history' not in st.session_state:
@@ -26,7 +46,6 @@ if 'current_img_id' not in st.session_state:
 # --- APP UI ---
 st.set_page_config(page_title="Samaira's Library", page_icon="📚")
 
-# SIDEBAR
 with st.sidebar:
     st.header(f"📚 Stack ({len(st.session_state.history)})")
     if st.button("Clear History"):
@@ -46,7 +65,6 @@ with st.sidebar:
             st.caption(book['author'])
             st.write(book['one_line_verdict'])
 
-# MAIN PAGE
 st.title("📚 Can Samaira read these?")
 st.caption("Tip: You can take a photo of multiple books at once!")
 
@@ -60,16 +78,14 @@ if img_file:
     image = Image.open(img_file)
     results_container = st.container()
     
-    # LOGIC: Run AI only if new photo
     if st.session_state.current_img_id != img_file.file_id:
         with st.spinner("Analyzing all books in the photo..."):
             try:
-                # UPDATED PROMPT: HANDLES MULTIPLE BOOKS
                 prompt = f"""
                 Look at this image. It may contain one book or MULTIPLE books.
                 The reader is a {target_age}-year-old girl named Samaira.
                 
-                I need you to identify EVERY book visible in the image.
+                Identify EVERY book visible.
                 
                 Return a valid JSON object with this structure:
                 {{
@@ -86,34 +102,37 @@ if img_file:
                         }}
                     ],
                     "best_pick": {{
-                        "title": "Title of the most appropriate book for her age",
-                        "reason": "Why this is the winner compared to the others."
+                        "title": "Title of the most appropriate book",
+                        "reason": "Why this is the winner."
                     }}
                 }}
                 """
-                response = model.generate_content([prompt, image])
+                # We pass the safety settings here
+                response = model.generate_content([prompt, image], safety_settings=safety_settings)
                 
-                try:
-                    clean_text = response.text.replace("```json", "").replace("```", "").strip()
-                    data = json.loads(clean_text)
-                except:
-                    st.error("Could not read the books. Try getting closer.")
+                # DEBUGGING: If response is empty, we will know why
+                if not response.text:
+                    st.error("Error: The AI returned an empty response. It might have been blocked.")
                     st.stop()
 
-                # Save to memory
+                clean_text = response.text.replace("```json", "").replace("```", "").strip()
+                data = json.loads(clean_text)
+
                 st.session_state.current_results = data
                 st.session_state.current_img_id = img_file.file_id
                 
-                # Add all found books to history (avoiding dupes)
                 for book in data['books']:
                     if not any(b['title'] == book['title'] for b in st.session_state.history):
                         st.session_state.history.append(book)
                     
             except Exception as e:
-                st.error(f"Error: {e}")
+                # SHOW THE ACTUAL ERROR
+                st.error(f"Technical Error: {e}")
+                if 'response' in locals() and hasattr(response, 'text'):
+                    with st.expander("See Raw AI Response (Debug)"):
+                        st.text(response.text)
                 st.stop()
 
-    # --- DISPLAY RESULTS ---
     if st.session_state.current_results:
         data = st.session_state.current_results
         books = data.get("books", [])
@@ -122,21 +141,17 @@ if img_file:
         with results_container:
             st.divider()
             
-            # 1. SHOW THE WINNER (Only if more than 1 book)
             if len(books) > 1:
                 st.markdown("### 🏆 The Top Pick")
                 st.success(f"**{best['title']}** is the best choice because: {best['reason']}")
                 st.divider()
 
-            # 2. SHOW EACH BOOK CARD
             st.subheader(f"Found {len(books)} Books:")
             
             for i, book in enumerate(books):
-                # Color logic
                 color = "green" if "Green" in book["verdict"] else "orange"
                 if "Red" in book["verdict"]: color = "red"
                 
-                # Create a visual card for each book
                 with st.expander(f"{i+1}. {book['title']} ({book['verdict']})", expanded=True):
                     st.markdown(f":{color}[**VERDICT: {book['verdict']}**]")
                     st.caption(f"By {book['author']}")
@@ -145,16 +160,14 @@ if img_file:
                         st.error(f"⚠️ {book['negative_highlights']}")
                     st.success(f"🌟 {book['positive_highlights']}")
                     
-                    # Mini ratings grid
                     c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Positive", f"{book['ratings']['positive_content']}/5")
-                    c2.metric("Violence", f"{book['ratings']['violence']}/5")
+                    c1.metric("Pos", f"{book['ratings']['positive_content']}/5")
+                    c2.metric("Viol", f"{book['ratings']['violence']}/5")
                     c3.metric("Lang", f"{book['ratings']['language']}/5")
-                    c4.metric("Romance", f"{book['ratings']['sex']}/5")
+                    c4.metric("Rom", f"{book['ratings']['sex']}/5")
                     
                     st.write(f"**Details:** {book['details']}")
 
-        # --- CHAT FEATURE (Global) ---
         st.divider()
         st.subheader("💬 Ask about these books")
         user_question = st.text_input("Example: 'Which one is funniest?'")
