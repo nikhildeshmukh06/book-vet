@@ -12,27 +12,43 @@ except:
 
 genai.configure(api_key=api_key)
 
-# We switch to the standard 1.5 Flash. It is smarter than Lite but efficient.
-model = genai.GenerativeModel('gemini-1.5-flash')
+# --- FAIL-SAFE MODEL LOADER ---
+# This function tries multiple model names until one works
+def get_working_model():
+    possible_models = [
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-flash-latest",
+        "gemini-1.5-pro",
+        "gemini-pro"
+    ]
+    for model_name in possible_models:
+        try:
+            # We test the model with a tiny "hello" to see if it responds
+            test_model = genai.GenerativeModel(model_name)
+            test_model.generate_content("test")
+            return test_model # If we get here, it worked!
+        except:
+            continue # If it failed, try the next one
+    return None # If all failed
 
-# SAFETY SETTINGS: Prevent the AI from blocking "scary" book covers
+# Load the working model once and save it
+if "active_model" not in st.session_state:
+    with st.spinner("Finding the best available AI server..."):
+        st.session_state.active_model = get_working_model()
+
+if st.session_state.active_model is None:
+    st.error("Could not connect to ANY Google AI model. Check your API Key.")
+    st.stop()
+
+model = st.session_state.active_model
+
+# SAFETY SETTINGS
 safety_settings = [
-    {
-        "category": "HARM_CATEGORY_HARASSMENT",
-        "threshold": "BLOCK_NONE"
-    },
-    {
-        "category": "HARM_CATEGORY_HATE_SPEECH",
-        "threshold": "BLOCK_NONE"
-    },
-    {
-        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-        "threshold": "BLOCK_NONE"
-    },
-    {
-        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-        "threshold": "BLOCK_NONE"
-    },
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
 ]
 
 # --- SESSION STATE ---
@@ -107,12 +123,11 @@ if img_file:
                     }}
                 }}
                 """
-                # We pass the safety settings here
+                
                 response = model.generate_content([prompt, image], safety_settings=safety_settings)
                 
-                # DEBUGGING: If response is empty, we will know why
                 if not response.text:
-                    st.error("Error: The AI returned an empty response. It might have been blocked.")
+                    st.error("Error: The AI returned an empty response.")
                     st.stop()
 
                 clean_text = response.text.replace("```json", "").replace("```", "").strip()
@@ -126,10 +141,9 @@ if img_file:
                         st.session_state.history.append(book)
                     
             except Exception as e:
-                # SHOW THE ACTUAL ERROR
                 st.error(f"Technical Error: {e}")
                 if 'response' in locals() and hasattr(response, 'text'):
-                    with st.expander("See Raw AI Response (Debug)"):
+                    with st.expander("Debug Info"):
                         st.text(response.text)
                 st.stop()
 
@@ -138,42 +152,4 @@ if img_file:
         books = data.get("books", [])
         best = data.get("best_pick", {})
 
-        with results_container:
-            st.divider()
-            
-            if len(books) > 1:
-                st.markdown("### 🏆 The Top Pick")
-                st.success(f"**{best['title']}** is the best choice because: {best['reason']}")
-                st.divider()
-
-            st.subheader(f"Found {len(books)} Books:")
-            
-            for i, book in enumerate(books):
-                color = "green" if "Green" in book["verdict"] else "orange"
-                if "Red" in book["verdict"]: color = "red"
-                
-                with st.expander(f"{i+1}. {book['title']} ({book['verdict']})", expanded=True):
-                    st.markdown(f":{color}[**VERDICT: {book['verdict']}**]")
-                    st.caption(f"By {book['author']}")
-                    
-                    if book.get("negative_highlights"):
-                        st.error(f"⚠️ {book['negative_highlights']}")
-                    st.success(f"🌟 {book['positive_highlights']}")
-                    
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Pos", f"{book['ratings']['positive_content']}/5")
-                    c2.metric("Viol", f"{book['ratings']['violence']}/5")
-                    c3.metric("Lang", f"{book['ratings']['language']}/5")
-                    c4.metric("Rom", f"{book['ratings']['sex']}/5")
-                    
-                    st.write(f"**Details:** {book['details']}")
-
-        st.divider()
-        st.subheader("💬 Ask about these books")
-        user_question = st.text_input("Example: 'Which one is funniest?'")
-        
-        if user_question:
-            with st.spinner("Comparing..."):
-                chat_prompt = f"You are analyzing these books: {[b['title'] for b in books]}. The parent asks: {user_question}. Compare them briefly for Samaira."
-                chat_response = model.generate_content([chat_prompt, image])
-                st.write(f"**Answer:** {chat_response.text}")
+        with results
