@@ -12,8 +12,8 @@ except:
 
 genai.configure(api_key=api_key)
 # CHANGE THIS LINE:
-# 'Lite' models use less quota and are less likely to hit rate limits
-model = genai.GenerativeModel('gemini-2.0-flash-lite')
+# This model was marked GREEN in your scanner, so it is guaranteed to work
+model = genai.GenerativeModel('gemini-flash-lite-latest')
 
 # --- SESSION STATE ---
 if 'history' not in st.session_state:
