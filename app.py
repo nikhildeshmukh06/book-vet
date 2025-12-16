@@ -13,7 +13,7 @@ except:
 genai.configure(api_key=api_key)
 
 # --- FAIL-SAFE MODEL LOADER ---
-# This function tries multiple model names until one works
+# This ensures we find a working model automatically
 def get_working_model():
     possible_models = [
         "gemini-1.5-flash",
@@ -24,21 +24,21 @@ def get_working_model():
     ]
     for model_name in possible_models:
         try:
-            # We test the model with a tiny "hello" to see if it responds
             test_model = genai.GenerativeModel(model_name)
+            # Quick test to see if it connects
             test_model.generate_content("test")
-            return test_model # If we get here, it worked!
+            return test_model
         except:
-            continue # If it failed, try the next one
-    return None # If all failed
+            continue
+    return None
 
-# Load the working model once and save it
+# Load model once and save to session
 if "active_model" not in st.session_state:
-    with st.spinner("Finding the best available AI server..."):
+    with st.spinner("Connecting to AI..."):
         st.session_state.active_model = get_working_model()
 
 if st.session_state.active_model is None:
-    st.error("Could not connect to ANY Google AI model. Check your API Key.")
+    st.error("Could not connect to Google AI. Please check your API Key.")
     st.stop()
 
 model = st.session_state.active_model
@@ -62,6 +62,7 @@ if 'current_img_id' not in st.session_state:
 # --- APP UI ---
 st.set_page_config(page_title="Samaira's Library", page_icon="📚")
 
+# SIDEBAR
 with st.sidebar:
     st.header(f"📚 Stack ({len(st.session_state.history)})")
     if st.button("Clear History"):
@@ -81,6 +82,7 @@ with st.sidebar:
             st.caption(book['author'])
             st.write(book['one_line_verdict'])
 
+# MAIN PAGE
 st.title("📚 Can Samaira read these?")
 st.caption("Tip: You can take a photo of multiple books at once!")
 
@@ -94,8 +96,9 @@ if img_file:
     image = Image.open(img_file)
     results_container = st.container()
     
+    # 1. ANALYZE (If new photo)
     if st.session_state.current_img_id != img_file.file_id:
-        with st.spinner("Analyzing all books in the photo..."):
+        with st.spinner("Analyzing books..."):
             try:
                 prompt = f"""
                 Look at this image. It may contain one book or MULTIPLE books.
@@ -136,20 +139,46 @@ if img_file:
                 st.session_state.current_results = data
                 st.session_state.current_img_id = img_file.file_id
                 
+                # Add to history
                 for book in data['books']:
                     if not any(b['title'] == book['title'] for b in st.session_state.history):
                         st.session_state.history.append(book)
                     
             except Exception as e:
                 st.error(f"Technical Error: {e}")
-                if 'response' in locals() and hasattr(response, 'text'):
-                    with st.expander("Debug Info"):
-                        st.text(response.text)
                 st.stop()
 
+    # 2. DISPLAY RESULTS
     if st.session_state.current_results:
         data = st.session_state.current_results
         books = data.get("books", [])
         best = data.get("best_pick", {})
 
-        with results
+        with results_container:
+            st.divider()
+            
+            # Show "Best Pick" only if there are multiple books
+            if len(books) > 1 and best:
+                st.markdown("### 🏆 The Top Pick")
+                st.success(f"**{best.get('title', 'Unknown')}** is the best choice because: {best.get('reason', 'N/A')}")
+                st.divider()
+
+            st.subheader(f"Found {len(books)} Books:")
+            
+            for i, book in enumerate(books):
+                color = "green" if "Green" in book["verdict"] else "orange"
+                if "Red" in book["verdict"]: color = "red"
+                
+                with st.expander(f"{i+1}. {book['title']} ({book['verdict']})", expanded=True):
+                    st.markdown(f":{color}[**VERDICT: {book['verdict']}**]")
+                    st.caption(f"By {book['author']}")
+                    
+                    if book.get("negative_highlights"):
+                        st.error(f"⚠️ {book['negative_highlights']}")
+                    st.success(f"🌟 {book['positive_highlights']}")
+                    
+                    # Ratings Grid
+                    r = book.get("ratings", {"violence":0, "sex":0, "language":0, "positive_content":0})
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Pos", f"{r['positive_content']}/5")
+                    c2.metric("Viol", f"{r['violence']}/5")
